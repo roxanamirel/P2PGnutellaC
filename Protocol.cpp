@@ -7,6 +7,7 @@
 #include "p2p.h"
 #include <ws2tcpip.h>
 
+#include <inttypes.h> /* strtoimax */
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -22,24 +23,39 @@ unsigned int getUniqueMessageId() {
 	return (3232235797 + PORT_DEFAULT + t.wHour + t.wMinute + t.wSecond + t.wMilliseconds);
 }
 
-int main(int argc, char** argv)
-{
+
+P2P_h getJoinRequestMessage() {
 	//create a JOIN message
 	P2P_h p2pHeader;
 	p2pHeader.version = 1;
-	p2pHeader.ttl = 1;
+	p2pHeader.ttl = 3;
 	p2pHeader.reserved = 0;
-	p2pHeader.org_port = PORT_DEFAULT;
-	p2pHeader.org_ip = 3232235797;
+	p2pHeader.org_port = htons(PORT_DEFAULT);
+	p2pHeader.org_ip = htonl(3232235797);
 	p2pHeader.msg_type = MSG_JOIN;
-	p2pHeader.msg_id = getUniqueMessageId();
-	p2pHeader.length = 0;
+	p2pHeader.msg_id = htonl(getUniqueMessageId());
+	p2pHeader.length = htons(0);
+	return p2pHeader;
 
-	SOCKET ConnectSocket = INVALID_SOCKET;
+}
+P2P_h getQueryMessageHeader(int queryLength) {
+	P2P_h p2pHeaderQuery;
+	p2pHeaderQuery.version = 1;
+	p2pHeaderQuery.ttl = 1;
+	p2pHeaderQuery.reserved = 0;
+	p2pHeaderQuery.org_port = htons(PORT_DEFAULT);
+	p2pHeaderQuery.org_ip = htonl(3232235797);
+	p2pHeaderQuery.msg_type = MSG_QUERY;
+	p2pHeaderQuery.msg_id = htonl(getUniqueMessageId());
+	p2pHeaderQuery.length = htons(queryLength);
+	return p2pHeaderQuery;
+}
+
+SOCKET ConnectSocket = INVALID_SOCKET;
+int initializeConnection() {
+
 	WSADATA wsaData;
-	struct addrinfo *result = NULL,
-		*ptr = NULL,
-		hints;
+	struct addrinfo *result = NULL, *ptr = NULL, hints;
 	int iResult;
 
 
@@ -47,7 +63,8 @@ int main(int argc, char** argv)
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
 		printf("WSAStartup failed with error: %d\n", iResult);
-		return 1;
+		return -1;
+
 	}
 
 	ZeroMemory(&hints, sizeof(hints));
@@ -60,10 +77,8 @@ int main(int argc, char** argv)
 	if (iResult != 0) {
 		printf("getaddrinfo failed with error: %d\n", iResult);
 		WSACleanup();
-		return 1;
+
 	}
-
-
 	// Attempt to connect to an address until one succeeds
 	for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
 
@@ -73,7 +88,7 @@ int main(int argc, char** argv)
 		if (ConnectSocket == INVALID_SOCKET) {
 			printf("socket failed with error: %ld\n", WSAGetLastError());
 			WSACleanup();
-			return 1;
+			return -1;
 		}
 
 		// Connect to server.
@@ -91,104 +106,152 @@ int main(int argc, char** argv)
 	if (ConnectSocket == INVALID_SOCKET) {
 		printf("Unable to connect to server!\n");
 		WSACleanup();
-		return 1;
+		return -1;
+
 	}
+	return 0;
+
+}
+
+int send_join_request() {
+	P2P_h p2pHeader = getJoinRequestMessage();
 	char frame[HLEN];
 	memcpy(frame, &p2pHeader, sizeof(frame));
-	// Send an initial buffer
-	iResult = send(ConnectSocket, frame, HLEN, 0);
+	// Send join request message
+	int iResult = send(ConnectSocket, frame, HLEN, 0);
 	if (iResult == SOCKET_ERROR) {
 		printf("send failed with error: %d\n", WSAGetLastError());
 		closesocket(ConnectSocket);
 		WSACleanup();
 		return 1;
+
+	}
+	return 0;
+}
+
+boolean isGunutellaPackage(P2P_h received_header) {
+	return received_header.version == P_VERSION && received_header.ttl > 0 && received_header.ttl <= MAX_TTL;
+}
+
+int processJoinResponseBody(char* recvbuf) {
+	P2P_join join_result;
+
+	memcpy(&join_result, recvbuf + HLEN, JOINLEN);
+	if (ntohs(join_result.status) == JOIN_ACC) {
+		printf("Bootstrap process succeeded!! \n");
+		return 0;
+
+	}
+	else {
+		printf("Bootstrap process failed!!");
+		return -1;
+	}
+}
+
+
+int msg_id;
+void sendQuery() {
+	char query_message[] = "vm1testkey";
+	query_message[sizeof(query_message) - 1] = '\0';
+
+	P2P_h p2pHeaderQuery = getQueryMessageHeader(strlen(query_message));
+	msg_id = p2pHeaderQuery.msg_id;
+
+	//Create buffer that can hold both.
+	char combined[HLEN + sizeof(query_message)];
+
+	//Copy arrays in individually.
+	memcpy(combined, &p2pHeaderQuery, HLEN);
+	memcpy(combined + HLEN, query_message, sizeof(query_message));
+
+	int iResult2 = send(ConnectSocket, combined, sizeof(combined), 0);
+	if (iResult2 == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(ConnectSocket);
+		WSACleanup();
+		return;
+	}
+	else {
+		printf("Bytes sent from query: %d\n\n", iResult2);
 	}
 
+}
 
+int main(int argc, char** argv)
+{
+	if (initializeConnection() == -1) {
+		printf("The connection could not be established!");
+	}
+	else {
+		if (send_join_request() == 0) {
+			printf("Join request was sent. Waiting for join response. \n");
+		}
+	}
 
-	int queryNo = 1;
-
-	P2P_h join_response;
-	int recvbuflen = sizeof(join_response);
-	char recvbuf[sizeof(join_response)];
-	// Receive until the peer closes the connection
+	int iResult;
+	P2P_h received_header;
+	char recvbuf[64];
+	bool connected = false;
+	// Receive 
 	do {
-
-		iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
-
+		iResult = recv(ConnectSocket, recvbuf, 64, 0);
 		if (iResult > 0) {
-			printf("Bytes received: %d\n", iResult);
-			memcpy(&join_response, recvbuf, sizeof(recvbuf));
-			if (join_response.version == 1 && join_response.ttl > 0 && join_response.ttl <= 5) {
-				//(0x0200)16 = (512)10
-				if (join_response.msg_type == MSG_JOIN) {
-					if (join_response.length == 512) {
-						printf("Length: %u", join_response.length);
-						printf("\n");
-						printf("MessageType: %u", join_response.msg_type);
-						printf("\n");
-						printf("Message ID: %u", join_response.msg_id);
-						printf("\n");
-						printf("\n");
-						//---------------------------------------------------------------------
-						if (queryNo == 1) {
-							queryNo--;
-							//create a QUERY message
-							char query_message[] = "vm1testkeyp";
-							query_message[11] = NULL;
-							
+			memcpy(&received_header, recvbuf, HLEN);
+			if (isGunutellaPackage(received_header)) {
 
-							P2P_h p2pHeaderQuery;
-							p2pHeader.version = 1;
-							p2pHeader.ttl = 3;
-							p2pHeader.reserved = 0;
-							p2pHeader.org_port = PORT_DEFAULT;
-							p2pHeader.org_ip = 3232235797;
-							p2pHeader.msg_type = MSG_QUERY;
-							p2pHeader.msg_id = getUniqueMessageId();
-							p2pHeader.length = sizeof(query_message);
-
-							//----------------------------------
-							char frame2[HLEN+1];
-							const int size_total_frame = HLEN + sizeof(query_message);
-							char total_frame[size_total_frame];
-												
-							memcpy(frame2, &p2pHeaderQuery, sizeof(frame2));
-							
-							frame2[sizeof(frame2) - 1] = NULL;
-							strcpy_s(total_frame, frame2);
-							strcat_s(total_frame, query_message);
-							
-							puts("SENDING: ");
-							puts(total_frame);
-							// Send an initial buffer
-							int iResult2 = send(ConnectSocket, total_frame, HLEN + sizeof(query_message), 0);
-							if (iResult2 == SOCKET_ERROR) {
-								printf("send failed with error: %d\n", WSAGetLastError());
-								closesocket(ConnectSocket);
-								WSACleanup();
-								return 1;
-							}
-							else {
-								printf("Bytes sent from query: %d\n", iResult2);
-
-
-							}
+				if (received_header.msg_type == MSG_JOIN) {
+					if (htons(received_header.length) == JOINLEN) {
+						printf("A join response was received. \n");
+						if (processJoinResponseBody(recvbuf) == -1) {
+							break;
 						}
+						else {
+							sendQuery();
+						}
+
 					}
 
-					else {
-						printf("Join was not possible");
+				}
+				else if (received_header.msg_type == MSG_QHIT) {
+					printf("HIT! \n");
+					if (ntohl(received_header.msg_id == msg_id)) {
+						printf("HIT for a query request \n");
+						
+						P2P_hit_front hit_front;
+						memcpy(&hit_front, recvbuf+HLEN, 4);
+						printf("Matched Resources: %d \n", ntohs(hit_front.entry_size));
+						printf("SBZ is: %d \n ", ntohs(hit_front.sbz));
+
+						P2P_hit_entry hit_entry;
+						memcpy(&hit_entry, recvbuf + HLEN + 4, 8);
+						printf("Resource Id: %d \n", ntohs(hit_entry.resourceId));
+						printf("Resource Value: 0x%x \n", ntohl(hit_entry.resourceValue));
+						
+
 					}
+
+
+
+
 				}
-				if (join_response.msg_type == MSG_QHIT) {
-					printf("HIIIIIIIIIIIIIIIIIT");
-				}
-				if (join_response.msg_type == MSG_PING) {
+				else if (received_header.msg_type == MSG_PING) {
 					printf("PING\n");
 				}
-			}
+				else {
+					printf("OTHER TYPE OF MESG:  \n");
+					printf("Length: %u", received_header.length);
+					printf("\n");
+					printf("MessageType: %u", received_header.msg_type);
+					printf("\n");
+					printf("0x%02x, ", received_header.msg_type);
+					printf("\n");
+					printf("Message ID: %u", received_header.msg_id);
+					printf("\n");
+					printf("TTL: %u", received_header.ttl);
+					printf("\n--------------------");
+				}
 
+			}
 
 		}
 
@@ -196,16 +259,11 @@ int main(int argc, char** argv)
 			printf("Connection closed\n");
 		else
 			printf("recv failed with error: %d\n", WSAGetLastError());
-
 	} while (iResult > 0);
 
 	// cleanup
 	closesocket(ConnectSocket);
 	WSACleanup();
-
-
-
-
 
 	getchar();
 

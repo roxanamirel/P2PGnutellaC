@@ -75,4 +75,18 @@ struct P2P_pong_entry {
     uint16_t       sbz;
 };
 
+/* The front part of the Hit  message body,
+which includes the entry size */
+struct P2P_hit_front {
+	uint16_t    entry_size;
+	uint16_t    sbz;
+};
+
+/* The structure of each entry in Pong body */
+struct P2P_hit_entry {
+	uint16_t resourceId;
+	uint16_t       sbz;
+	uint32_t       resourceValue;
+};
+
 #endif
