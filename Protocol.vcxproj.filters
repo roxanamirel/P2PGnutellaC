@@ -24,7 +24,7 @@
     <ClInclude Include="targetver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\..\..\Desktop\p2p.h">
+    <ClInclude Include="p2p.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
