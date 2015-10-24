@@ -16,6 +16,9 @@
 #define MSG_JOIN        0x03
 #define MSG_QUERY       0x80
 #define MSG_QHIT        0x81
+#define PUSH			0x40
+
+#define MYVALUE        0x12121212
 
 /* header length */
 #define HLEN            (sizeof(struct P2P_h))
@@ -87,6 +90,19 @@ struct P2P_hit_entry {
 	uint16_t resourceId;
 	uint16_t       sbz;
 	uint32_t       resourceValue;
+};
+
+
+struct P2P_push {
+	char serventId[16];
+	uint32_t       key;
+	uint32_t    rec_ip;
+	uint16_t    rec_port;
+};
+
+struct P2P_query {
+	char* search_criteria;
+
 };
 
 #endif
