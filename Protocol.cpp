@@ -23,9 +23,14 @@ HANDLE gDoneEvent;
 HANDLE hTimerQueue = NULL;
 SOCKET ConnectSocket[3] = { INVALID_SOCKET };
 
+int activeNeighbours = 0;
+const int TOTAL_POSSIBLE_NEIGHBOURS = 10;
+Neighbour myNeighbours[TOTAL_POSSIBLE_NEIGHBOURS];
+
+bool shouldSendQuery = true;
 
 void sendTypeAPingMessage();
-
+void sendTypeBPingMessage();
 
 unsigned int getUniqueMessageId() {
 
@@ -45,11 +50,12 @@ VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 	{
 		// lpParam points to the argument; in this case it is an int
 
-		
+
 		if (TimerOrWaitFired)
 		{
 			printf("\n****************Five seconds passed****************\n\n");
 			sendTypeAPingMessage();
+			sendTypeBPingMessage();
 		}
 		else
 		{
@@ -169,7 +175,6 @@ int initializeConnection(char* ip, char* port, int socketNo) {
 	struct addrinfo *result = NULL, *ptr = NULL, hints;
 	int iResult;
 
-
 	// Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
@@ -211,7 +216,6 @@ int initializeConnection(char* ip, char* port, int socketNo) {
 		}
 		break;
 	}
-
 	freeaddrinfo(result);
 
 	if (ConnectSocket[socketNo] == INVALID_SOCKET) {
@@ -221,7 +225,6 @@ int initializeConnection(char* ip, char* port, int socketNo) {
 
 	}
 	return 0;
-
 }
 
 int send_join_request(int socketNo) {
@@ -231,7 +234,7 @@ int send_join_request(int socketNo) {
 	// Send join request message
 	int iResult = send(ConnectSocket[socketNo], frame, HLEN, 0);
 	if (iResult == SOCKET_ERROR) {
-		printf("send failed with error: %d\n", WSAGetLastError());
+		printf("[send_join_request] send failed with error: %d\n", WSAGetLastError());
 		closesocket(ConnectSocket[socketNo]);
 		WSACleanup();
 		return 1;
@@ -244,11 +247,11 @@ boolean isGunutellaPackage(P2P_h received_header) {
 }
 
 int processJoinResponseBody(char* recvbuf) {
+
 	P2P_join join_result;
 
 	memcpy(&join_result, recvbuf + HLEN, JOINLEN);
 	return ntohs(join_result.status) == JOIN_ACC;
-
 }
 
 void extend_network(char *ip, char *port, int socketNo) {
@@ -257,40 +260,43 @@ void extend_network(char *ip, char *port, int socketNo) {
 		printf("The connection could not be established on socket: %d with Ip:  %s  ", socketNo, ip);
 	}
 	else {
+		printf("Trying to extend network with %s on port %s and socket %u\n\n", ip, port, socketNo);
+		myNeighbours[activeNeighbours].ip = ip;
+		myNeighbours[activeNeighbours].port = port;
+		activeNeighbours++;
 		if (send_join_request(socketNo) == 0) {
 			printf("Join request was sent to %s on socket %d. Waiting for join response. \n", ip, socketNo);
 		}
 	}
-
 }
 
 int msg_id;
-void sendQuery(int socketNo) {
-	char query_message[11] = "vm_testkey";
-	query_message[2] = (socketNo + 1) + '0';
-	query_message[sizeof(query_message) - 1] = '\0';
 
-	P2P_h p2pHeaderQuery = getQueryMessageHeader(strlen(query_message));
+void sendQuery(int socketNo, char query_key[]) {
+
+	printf("\n\n[Query] Looking for the key from socket %d\n", socketNo);
+	printf("[Query] Search after key: %s\n\n", query_key);
+
+	P2P_h p2pHeaderQuery = getQueryMessageHeader(strlen(query_key));
 	msg_id = p2pHeaderQuery.msg_id;
 
 	//Create buffer that can hold both.
-	char combined[HLEN + sizeof(query_message)];
+	char combined[HLEN + sizeof(query_key)];
 
 	//Copy arrays in individually.
 	memcpy(combined, &p2pHeaderQuery, HLEN);
-	memcpy(combined + HLEN, query_message, sizeof(query_message));
+	memcpy(combined + HLEN, query_key, sizeof(query_key));
 
-	int iResult2 = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
-	if (iResult2 == SOCKET_ERROR) {
+	int iResult = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
+	if (iResult == SOCKET_ERROR) {
 		printf("send failed with error: %d\n", WSAGetLastError());
 		closesocket(ConnectSocket[socketNo]);
 		WSACleanup();
 		return;
 	}
 	else {
-		printf("Bytes sent from query: %d\n\n", iResult2);
+		printf("Bytes sent from query: %d\n\n", iResult);
 	}
-
 }
 
 void send_PongAMessage(P2P_h pongA, int socketNo) {
@@ -300,74 +306,86 @@ void send_PongAMessage(P2P_h pongA, int socketNo) {
 	//Copy array
 	memcpy(pongString, &pongA, HLEN);
 
-	int iResult2 = send(ConnectSocket[socketNo], pongString, sizeof(pongString), 0);
-	if (iResult2 == SOCKET_ERROR) {
-		printf("send failed with error: %d\n", WSAGetLastError());
+	int iResult = send(ConnectSocket[socketNo], pongString, sizeof(pongString), 0);
+	if (iResult == SOCKET_ERROR) {
+		printf("[send_PongAMessage] Send failed with error: %d\n", WSAGetLastError());
 		closesocket(ConnectSocket[socketNo]);
 		WSACleanup();
 		return;
 	}
 	else {
-		printf("Sent Pong A to: %d \n\n", socketNo);
+		printf("Sent Pong A to: %d\n\n", socketNo);
 	}
 
 }
 
-void handlePongResponse(int socketNo, char querybuf[], P2P_h pingA) {
+void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 
-	P2P_h header;
-	memcpy(&header, querybuf, HLEN);
-	if (header.msg_type == MSG_PONG) {
-		if (header.msg_id == pingA.msg_id) {
-			printf("Received PONG TYPE A to %d.\n", socketNo);
-		}
-		else {
-			printf("Received PONG A with different msg_id");
-		}
+	if (header.length == 0) {
+		printf("Received PONG TYPE A from %d with msg_id = %u.\n", socketNo, ntohl(header.msg_id));
 	}
 	else {
-		printf("different kind of msg %u", header.msg_type);
+		printf("\nReceived PONG TYPE B from %d.\n", socketNo);
+		P2P_pong_front pong_front;
+		memcpy(&pong_front, recvbuf + HLEN, 4);
+		printf("Entry size = %d\n", ntohs(pong_front.entry_size));
+		printf("SBZ is: %d\n", ntohs(pong_front.sbz));
+
+		for (int i = 0; i < ntohs(pong_front.entry_size); i++) {
+			P2P_pong_entry pong_entry;
+			memcpy(&pong_entry, recvbuf + HLEN + 4 + (i * 8), 8);
+
+			printf("IP Address of %d entry = %u.%u.%u.%u with port = %u\n\n",
+				i,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b1,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b2,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b3,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b4,
+				ntohs(pong_entry.port));
+
+			char ip[15];
+			sprintf_s(ip, "%u.%u.%u.%u",
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b1,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b2,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b3,
+				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b4);
+
+			char port[5];
+			sprintf_s(port, "%u", (unsigned int)ntohs(pong_entry.port));
+
+			bool exists = false;
+			for (int j = 0; j < activeNeighbours; j++) {
+				if (strcmp(myNeighbours[j].ip, ip) == 0) {
+					exists = true;
+				}
+			}
+			if (!exists) {
+				extend_network(ip, port, activeNeighbours);
+			}
+		}
 	}
 }
 
 void sendTypeAPingMessage() {
-
-	int iResult[3];
 	char querybuf[HLEN];
-	for (int socketNo = 0; socketNo < 3; socketNo++) {
+	for (int socketNo = 0; socketNo < activeNeighbours; socketNo++) {
 		if (ConnectSocket[socketNo] != INVALID_SOCKET) {
 			P2P_h pingA = getPingTypeAMessage();
 			char pingString[HLEN];
 			//Copy array
 			memcpy(pingString, &pingA, HLEN);
 
-			int iResult2 = send(ConnectSocket[socketNo], pingString, sizeof(pingString), 0);
-			
-			//wait to receive the pong
-			iResult[socketNo] = recv(ConnectSocket[socketNo], querybuf, HLEN, 0);
-			if (iResult[socketNo] > 0) {
-				//handlePongResponse(socketNo, querybuf, pingA);
-			}
-			else if (iResult[socketNo] == 0)
-				printf("Connection closed: %d \n", socketNo);
-			else
-				printf("recv failed ** with error: %d\n", WSAGetLastError());
-			//-----------------------------------------------
+			int iResult = send(ConnectSocket[socketNo], pingString, sizeof(pingString), 0);
 
-
-
-			if (iResult2 == SOCKET_ERROR) {
-				printf("send failed with error: %d\n", WSAGetLastError());
+			if (iResult == SOCKET_ERROR) {
+				printf("[sendTypeAPingMessage] send failed with error: %d\n", WSAGetLastError());
 				closesocket(ConnectSocket[socketNo]);
 				WSACleanup();
 				return;
 			}
 			else {
-				printf("Sent Ping A to: %d \n\n ", socketNo);
+				printf("Sent Ping A to %d with msg_id = %u\n\n", socketNo, htonl(pingA.msg_id));
 			}
-
-			
-			
 		}
 	}
 }
@@ -385,7 +403,6 @@ void printQueryResult(int socketNo, char *recvbuf) {
 	memcpy(&hit_entry, recvbuf + HLEN + 4, 8);
 	printf("Resource Id: %d \n", ntohs(hit_entry.resourceId));
 	printf("Resource Value: 0x%x\n\n", ntohl(hit_entry.resourceValue));
-
 }
 
 void sendQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
@@ -413,24 +430,47 @@ void sendQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
 		memcpy(combined, &queryHit, HLEN);
 		memcpy(combined + HLEN, &hit_entry, sizeof(P2P_hit_entry));
 		memcpy(combined + HLEN + sizeof(P2P_hit_entry), &hit_front, sizeof(P2P_hit_front));
-		int iResult2 = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
-		if (iResult2 == SOCKET_ERROR) {
+		int iResult = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
+		if (iResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
 			closesocket(ConnectSocket[socketNo]);
 			WSACleanup();
 			return;
 		}
 		else {
-			printf("Bytes sent from query: %d\n\n", iResult2);
+			printf("Bytes sent from query: %d\n\n", iResult);
 		}
+	}
+}
 
+void sendTypeBPingMessage() {
+	char querybuf[HLEN];
+	for (int socketNo = 0; socketNo < activeNeighbours; socketNo++) {
+		if (ConnectSocket[socketNo] != INVALID_SOCKET) {
+			P2P_h pingB = getPingTypeAMessage();
+			pingB.ttl = 3;
+			char pingString[HLEN];
+			//Copy array
+			memcpy(pingString, &pingB, HLEN);
 
+			int iResult = send(ConnectSocket[socketNo], pingString, sizeof(pingString), 0);
+
+			if (iResult == SOCKET_ERROR) {
+				printf("send failed with error: %d\n", WSAGetLastError());
+				closesocket(ConnectSocket[socketNo]);
+				WSACleanup();
+				return;
+			}
+			else {
+				printf("Sent Ping B to %d with msg_id = %u\n\n ", socketNo, htonl(pingB.msg_id));
+			}
+		}
 	}
 }
 
 void process_receive(char* recvbuf, int socketNo) {
 	P2P_h received_header;
-	int iResult[3];
+	int iResult[TOTAL_POSSIBLE_NEIGHBOURS];
 	char querybuf[64];
 	memcpy(&received_header, recvbuf, HLEN);
 	if (isGunutellaPackage(received_header)) {
@@ -439,14 +479,21 @@ void process_receive(char* recvbuf, int socketNo) {
 
 		case MSG_JOIN:
 			if (htons(received_header.length) == JOINLEN) {
-				printf("A join response was received from %d \n", socketNo);
+				printf("A join response was received from %d\n", socketNo);
 				if (!processJoinResponseBody(recvbuf)) {
 					break;
 				}
 				else {
-					sendQuery(socketNo);
-					//iResult[socketNo] = recv(ConnectSocket[socketNo], querybuf, 64, 0);
-					//printQueryResult(socketNo, querybuf);
+					//TODO remove comments from next 3 lines
+					if (shouldSendQuery) {
+
+						char query_key[11] = "vm2testkey";
+						query_key[sizeof(query_key) - 1] = '\0';
+						sendQuery(socketNo, query_key);
+						iResult[socketNo] = recv(ConnectSocket[socketNo], querybuf, 64, 0);
+						printQueryResult(socketNo, querybuf);
+						shouldSendQuery = false;
+					}
 					//sendTypeAPingMessage();
 				}
 			} break;
@@ -462,7 +509,8 @@ void process_receive(char* recvbuf, int socketNo) {
 			if (received_header.ttl > 1) {
 				//TODO forward query
 			}
-			sendQueryHit(recvbuf, received_header, socketNo);
+			//TODOOOOOOOOOOOOOOOOOOoo
+			//sendQueryHit(recvbuf, received_header, socketNo);
 			break;
 		case MSG_PING:
 			if (received_header.ttl == 1) {
@@ -474,6 +522,10 @@ void process_receive(char* recvbuf, int socketNo) {
 			if (received_header.ttl > 1) {
 				printf("PING TYPE B received from socket:%d\n", socketNo);
 			}
+			break;
+
+		case MSG_PONG:
+			handlePongResponse(socketNo, received_header, recvbuf);
 			break;
 
 		default:
@@ -495,54 +547,51 @@ void process_receive(char* recvbuf, int socketNo) {
 
 void receive() {
 
-	int iResult[3];
-	int socketNo = -1;
-	char recvbuf[3][64];
+	int iResult[TOTAL_POSSIBLE_NEIGHBOURS];
+	char recvbuf[TOTAL_POSSIBLE_NEIGHBOURS][64];
 
 	// Receive 
 	do {
-		socketNo = ++socketNo % 3;
-		iResult[socketNo] = recv(ConnectSocket[socketNo], recvbuf[socketNo], 64, 0);
-		if (iResult[socketNo] > 0) {
-			process_receive(recvbuf[socketNo], socketNo);
+		for (int socketNo = 0; socketNo < activeNeighbours; socketNo++) {
 
+			iResult[socketNo] = recv(ConnectSocket[socketNo], recvbuf[socketNo], 64, 0);
+
+			if (iResult[socketNo] > 0) {
+				process_receive(recvbuf[socketNo], socketNo);
+			}
+			else if (iResult[socketNo] == 0)
+				printf("[receive] Connection closed\n");
+			else
+				printf("[receive] recv failed with error: %d\n", WSAGetLastError());
 		}
-		else if (iResult[socketNo] == 0)
-			printf("Connection closed\n");
-		else
-			printf("recv failed with error: %d\n", WSAGetLastError());
-
-	} while (iResult[socketNo] > 0);
+	} while (true);
 
 	// cleanup
 	for (int i = 0; i < 3; i++) {
 		closesocket(ConnectSocket[i]);
 	}
 	WSACleanup();
-
-
 }
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
 
 	myTimer(hTimerQueue);
 
 	printf("EXTENDING MY NETWORK.............................\n\n");
 
-	char *bootstrap_ip = "130.233.195.30";
+	char *bootstrap_ip = "130.233.195.31";
 	char *port = "6346";
-	//connect to bootstrap node first and send JOIN message
-	extend_network(bootstrap_ip, port, BOOTSTRAP_SOCKET);
+	//connect to bootstrap node first and send JOIN message	
+	extend_network(bootstrap_ip, port, activeNeighbours);
 
+	//extend_network(bootstrap_ip, port, BOOTSTRAP_SOCKET);7
+	/*
 	char* ip2 = "130.233.195.31";
 	extend_network(ip2, port, PEER1_SOCKET);
-	//receive(PEER1_SOCKET);
 
 	char* ip3 = "130.233.195.32";
 	extend_network(ip3, port, PEER2_SOCKET);
-	//receive(PEER2_SOCKET);
-
+	*/
 	//receive from peers
 	receive();
 

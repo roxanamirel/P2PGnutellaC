@@ -105,4 +105,9 @@ struct P2P_query {
 
 };
 
+struct Neighbour {
+	char*    ip;
+	char*    port;
+};
+
 #endif
