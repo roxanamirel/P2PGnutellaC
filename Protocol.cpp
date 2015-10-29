@@ -15,29 +15,30 @@
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
-#define   BOOTSTRAP_SOCKET 0
-#define   PEER1_SOCKET 1
-#define   PEER2_SOCKET 2
-
 HANDLE gDoneEvent;
 HANDLE hTimerQueue = NULL;
-SOCKET ConnectSocket[3] = { INVALID_SOCKET };
+
 
 int activeNeighbours = 0;
 const int TOTAL_POSSIBLE_NEIGHBOURS = 10;
+
 Neighbour myNeighbours[TOTAL_POSSIBLE_NEIGHBOURS];
+
+SOCKET ConnectSocket[TOTAL_POSSIBLE_NEIGHBOURS] = { INVALID_SOCKET };
+SOCKET ListenSocket = INVALID_SOCKET;
 
 bool shouldSendQuery = true;
 
 void sendTypeAPingMessage();
 void sendTypeBPingMessage();
+void sendQuery(int socketNo, char query_key[]);
 
 unsigned int getUniqueMessageId() {
 
 	SYSTEMTIME t;
 	GetSystemTime(&t);
 	//TODO add a sequence number
-	return (3232235797 + PORT_DEFAULT + t.wHour + t.wMinute + t.wSecond + t.wMilliseconds);
+	return (MY_IP + MY_PORT +5 + t.wHour + t.wMinute + t.wSecond + t.wMilliseconds);
 }
 
 VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired)
@@ -104,8 +105,8 @@ P2P_h getJoinRequestMessage() {
 	p2pHeader.version = 1;
 	p2pHeader.ttl = 3;
 	p2pHeader.reserved = 0;
-	p2pHeader.org_port = htons(PORT_DEFAULT);
-	p2pHeader.org_ip = htonl(3232235797);
+	p2pHeader.org_port = htons(MY_PORT);
+	p2pHeader.org_ip = htonl(MY_IP);
 	p2pHeader.msg_type = MSG_JOIN;
 	p2pHeader.msg_id = htonl(getUniqueMessageId());
 	p2pHeader.length = htons(0);
@@ -118,8 +119,8 @@ P2P_h getQueryMessageHeader(int queryLength) {
 	p2pHeaderQuery.version = 1;
 	p2pHeaderQuery.ttl = 1;
 	p2pHeaderQuery.reserved = 0;
-	p2pHeaderQuery.org_port = htons(PORT_DEFAULT);
-	p2pHeaderQuery.org_ip = htonl(3232235797);
+	p2pHeaderQuery.org_port = htons(MY_PORT);
+	p2pHeaderQuery.org_ip = htonl(MY_IP);
 	p2pHeaderQuery.msg_type = MSG_QUERY;
 	p2pHeaderQuery.msg_id = htonl(getUniqueMessageId());
 	p2pHeaderQuery.length = htons(queryLength);
@@ -131,8 +132,8 @@ P2P_h getQueryHitMessageHeader(uint32_t msg_id) {
 	p2pHeaderQuery.version = 1;
 	p2pHeaderQuery.ttl = 5;
 	p2pHeaderQuery.reserved = 0;
-	p2pHeaderQuery.org_port = htons(PORT_DEFAULT);
-	p2pHeaderQuery.org_ip = htonl(3232235797);
+	p2pHeaderQuery.org_port = htons(MY_PORT);
+	p2pHeaderQuery.org_ip = htonl(MY_IP);
 	p2pHeaderQuery.msg_type = MSG_QHIT;
 	p2pHeaderQuery.msg_id = htonl(msg_id);
 	p2pHeaderQuery.length = 0;
@@ -145,8 +146,8 @@ P2P_h getPongTypeAMessage(uint32_t msg_id) {
 	p2pHeader.version = 1;
 	p2pHeader.ttl = 1;
 	p2pHeader.reserved = 0;
-	p2pHeader.org_port = htons(PORT_DEFAULT);
-	p2pHeader.org_ip = htonl(3232235797);
+	p2pHeader.org_port = htons(MY_PORT);
+	p2pHeader.org_ip = htonl(MY_IP);
 	p2pHeader.msg_type = MSG_PONG;
 	p2pHeader.msg_id = htonl(msg_id);
 	p2pHeader.length = htons(0);
@@ -160,8 +161,8 @@ P2P_h getPingTypeAMessage() {
 	p2pHeader.version = 1;
 	p2pHeader.ttl = 1;
 	p2pHeader.reserved = 0;
-	p2pHeader.org_port = htons(PORT_DEFAULT);
-	p2pHeader.org_ip = htonl(3232235797);
+	p2pHeader.org_port = htons(MY_PORT);
+	p2pHeader.org_ip = htonl(MY_IP);
 	p2pHeader.msg_type = MSG_PING;
 	p2pHeader.msg_id = htonl(getUniqueMessageId());
 	p2pHeader.length = htons(0);
@@ -210,6 +211,7 @@ int initializeConnection(char* ip, char* port, int socketNo) {
 		// Connect to server.
 		iResult = connect(ConnectSocket[socketNo], ptr->ai_addr, (int)ptr->ai_addrlen);
 		if (iResult == SOCKET_ERROR) {
+			printf("Connection Error: %ld\n", WSAGetLastError());
 			closesocket(ConnectSocket[socketNo]);
 			ConnectSocket[socketNo] = INVALID_SOCKET;
 			continue;
@@ -254,6 +256,23 @@ int processJoinResponseBody(char* recvbuf) {
 	return ntohs(join_result.status) == JOIN_ACC;
 }
 
+P2P_h getJoinReponseMessage(uint32_t ip , uint16_t port) {
+	//create a JOIN message
+	P2P_h p2pHeader;
+	p2pHeader.version = 1;
+	p2pHeader.ttl = 1;
+	p2pHeader.reserved = 0;
+	p2pHeader.org_port = port;
+	p2pHeader.org_ip = ip;
+	p2pHeader.msg_type = MSG_JOIN;
+	p2pHeader.msg_id = htonl(getUniqueMessageId());
+	p2pHeader.length = htons(JOINLEN);
+	return p2pHeader;
+
+
+
+}
+
 void extend_network(char *ip, char *port, int socketNo) {
 
 	if (initializeConnection(ip, port, socketNo) == -1) {
@@ -281,11 +300,11 @@ void sendQuery(int socketNo, char query_key[]) {
 	msg_id = p2pHeaderQuery.msg_id;
 
 	//Create buffer that can hold both.
-	char combined[HLEN + sizeof(query_key)];
+	char combined[HLEN + 11];
 
 	//Copy arrays in individually.
 	memcpy(combined, &p2pHeaderQuery, HLEN);
-	memcpy(combined + HLEN, query_key, sizeof(query_key));
+	memcpy(combined + HLEN, query_key, strlen(query_key));
 
 	int iResult = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
 	if (iResult == SOCKET_ERROR) {
@@ -334,7 +353,6 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 		for (int i = 0; i < ntohs(pong_front.entry_size); i++) {
 			P2P_pong_entry pong_entry;
 			memcpy(&pong_entry, recvbuf + HLEN + 4 + (i * 8), 8);
-
 			printf("IP Address of %d entry = %u.%u.%u.%u with port = %u\n\n",
 				i,
 				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b1,
@@ -342,6 +360,7 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b3,
 				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b4,
 				ntohs(pong_entry.port));
+			
 
 			char ip[15];
 			sprintf_s(ip, "%u.%u.%u.%u",
@@ -350,7 +369,7 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b3,
 				(unsigned int)pong_entry.ip.S_un.S_un_b.s_b4);
 
-			char port[5];
+			char port[10];
 			sprintf_s(port, "%u", (unsigned int)ntohs(pong_entry.port));
 
 			bool exists = false;
@@ -395,12 +414,12 @@ void printQueryResult(int socketNo, char *recvbuf) {
 	printf("HIT for a query request from %d \n", socketNo);
 
 	P2P_hit_front hit_front;
-	memcpy(&hit_front, recvbuf + HLEN, 4);
+	memcpy(&hit_front, recvbuf + HLEN, sizeof(P2P_hit_front));
 	printf("Matched Resources: %d\n", ntohs(hit_front.entry_size));
 	printf("SBZ is: %d\n", ntohs(hit_front.sbz));
 
 	P2P_hit_entry hit_entry;
-	memcpy(&hit_entry, recvbuf + HLEN + 4, 8);
+	memcpy(&hit_entry, recvbuf + HLEN + sizeof(P2P_hit_front), sizeof(P2P_hit_entry));
 	printf("Resource Id: %d \n", ntohs(hit_entry.resourceId));
 	printf("Resource Value: 0x%x\n\n", ntohl(hit_entry.resourceValue));
 }
@@ -467,7 +486,34 @@ void sendTypeBPingMessage() {
 		}
 	}
 }
+void sendJoinResponse(P2P_h received_header, int socketNo) {
+	
+	printf("[Sending join response] ");
 
+	P2P_h joinResponse = getJoinReponseMessage(received_header.org_ip, received_header.org_port);
+	P2P_join joinBody;
+	joinBody.status = JOIN_ACC;
+
+	//Create buffer that can hold both.
+	char combined[HLEN + sizeof(P2P_join)];
+
+	//Copy arrays in individually.
+	memcpy(combined, &joinResponse, HLEN);
+	memcpy(combined + HLEN, &joinBody, sizeof(P2P_join));
+
+	int iResult = send(ConnectSocket[socketNo], combined, sizeof(combined), 0);
+	if (iResult == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(ConnectSocket[socketNo]);
+		WSACleanup();
+		return;
+	}
+	else {
+		printf("Bytes sent from join response: %d\n\n", iResult);
+	}
+
+
+}
 void process_receive(char* recvbuf, int socketNo) {
 	P2P_h received_header;
 	int iResult[TOTAL_POSSIBLE_NEIGHBOURS];
@@ -480,24 +526,23 @@ void process_receive(char* recvbuf, int socketNo) {
 		case MSG_JOIN:
 			if (htons(received_header.length) == JOINLEN) {
 				printf("A join response was received from %d\n", socketNo);
-				if (!processJoinResponseBody(recvbuf)) {
-					break;
-				}
-				else {
-					//TODO remove comments from next 3 lines
+				if (processJoinResponseBody(recvbuf)) {
 					if (shouldSendQuery) {
-
-						char query_key[11] = "vm2testkey";
+						char query_key[11] = "vm3testkey";
 						query_key[sizeof(query_key) - 1] = '\0';
 						sendQuery(socketNo, query_key);
-						iResult[socketNo] = recv(ConnectSocket[socketNo], querybuf, 64, 0);
-						printQueryResult(socketNo, querybuf);
 						shouldSendQuery = false;
 					}
-					//sendTypeAPingMessage();
-				}
-			} break;
+				}		
+			}
+			else {
+				printf("JOIN REQUEST\n");
+				sendJoinResponse(received_header,socketNo);
 
+			}
+			
+			
+			break;
 
 		case MSG_QHIT:
 			if (ntohl(received_header.msg_id == msg_id)) {
@@ -552,8 +597,7 @@ void receive() {
 
 	// Receive 
 	do {
-		for (int socketNo = 0; socketNo < activeNeighbours; socketNo++) {
-
+		for (int socketNo = 0; socketNo <= activeNeighbours; socketNo++) {
 			iResult[socketNo] = recv(ConnectSocket[socketNo], recvbuf[socketNo], 64, 0);
 
 			if (iResult[socketNo] > 0) {
@@ -573,25 +617,109 @@ void receive() {
 	WSACleanup();
 }
 
+#define DEFAULT_BUFLEN 512
+
+
+
+void setupListen ()
+{
+	WSADATA wsaData;
+	int iResult;
+	char* mylisteningPort = "6159";
+	
+	
+
+	struct addrinfo *result = NULL;
+	struct addrinfo hints;
+
+	int iSendResult;
+	char recvbuf[DEFAULT_BUFLEN];
+	int recvbuflen = DEFAULT_BUFLEN;
+
+	// Initialize Winsock
+	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (iResult != 0) {
+		printf("WSAStartup failed with error: %d\n", iResult);
+		
+	}
+
+	ZeroMemory(&hints, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_PASSIVE;
+
+	// Resolve the server address and port
+	iResult = getaddrinfo(NULL, mylisteningPort, &hints, &result);
+	if (iResult != 0) {
+		printf("getaddrinfo failed with error: %d\n", iResult);
+		WSACleanup();
+	
+	}
+
+	// Create a SOCKET for connecting to server
+	ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+	if (ListenSocket == INVALID_SOCKET) {
+		printf("socket failed with error: %ld\n", WSAGetLastError());
+		freeaddrinfo(result);
+		WSACleanup();
+		
+	}
+
+	// Setup the TCP listening socket
+	iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+	if (iResult == SOCKET_ERROR) {
+		printf("bind failed with error: %d\n", WSAGetLastError());
+		freeaddrinfo(result);
+		closesocket(ListenSocket);
+		WSACleanup();
+	
+	}
+
+	freeaddrinfo(result);
+
+	iResult = listen(ListenSocket, SOMAXCONN);
+	if (iResult == SOCKET_ERROR) {
+		printf("listen failed with error: %d\n", WSAGetLastError());
+		closesocket(ListenSocket);
+		WSACleanup();
+	
+	}
+	
+}
+
+int accept_Connection(int socketNo) {
+	// Accept a client socket
+	ConnectSocket[socketNo] = accept(ListenSocket, NULL, NULL);
+	if (ConnectSocket[socketNo] == INVALID_SOCKET) {
+		printf("accept failed with error: %d\n", WSAGetLastError());
+		closesocket(ListenSocket);
+		WSACleanup();
+		return 1;
+	}
+
+
+}
+
+
+
+
 int main(int argc, char** argv) {
 
-	myTimer(hTimerQueue);
+	//myTimer(hTimerQueue);
 
-	printf("EXTENDING MY NETWORK.............................\n\n");
+	printf("Setup my listening  socket\n\n");
+	setupListen();
+	accept_Connection(0);
 
-	char *bootstrap_ip = "130.233.195.31";
-	char *port = "6346";
+	printf("Bootstraping MY NETWORK.............................\n\n");
+
 	//connect to bootstrap node first and send JOIN message	
-	extend_network(bootstrap_ip, port, activeNeighbours);
+	char *bootstrap_ip = "130.233.195.32";
+	char *port = "6346";
+	//extend_network(bootstrap_ip, port, activeNeighbours);
 
-	//extend_network(bootstrap_ip, port, BOOTSTRAP_SOCKET);7
-	/*
-	char* ip2 = "130.233.195.31";
-	extend_network(ip2, port, PEER1_SOCKET);
 
-	char* ip3 = "130.233.195.32";
-	extend_network(ip3, port, PEER2_SOCKET);
-	*/
 	//receive from peers
 	receive();
 
@@ -615,6 +743,3 @@ int main(int argc, char** argv) {
 
 	return 0;
 }
-
-
-
