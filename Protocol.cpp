@@ -285,7 +285,8 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 					exists = true;
 				}
 			}
-			if (!exists /*&& strstr(ip, "130.233") > 0 /*&& strcmp(inet_ntoa(ip_addrr), ip) != 0*/) {
+			//try to connect to the working peers not to others
+			if (!exists && strstr(ip, "130.233") > 0 /*&& strcmp(inet_ntoa(ip_addrr), ip) != 0*/) {
 				extend_network(ip, port, activeNeighbours);
 			}
 		}
