@@ -1,5 +1,5 @@
 #include "p2p.h" 
-
+#include "Params.h" 
 #pragma once
 
 boolean isGunutellaPackage(P2P_h received_header) {
@@ -46,7 +46,7 @@ P2P_h getJoinRequestMessage() {
 P2P_h getQueryMessageHeader(int queryLength) {
 	P2P_h p2pHeaderQuery;
 	p2pHeaderQuery.version = 1;
-	p2pHeaderQuery.ttl = 1;
+	p2pHeaderQuery.ttl = 3;
 	p2pHeaderQuery.reserved = 0;
 	p2pHeaderQuery.org_port = htons(MY_PORT);
 	p2pHeaderQuery.org_ip = htonl(MY_IP);

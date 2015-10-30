@@ -5,8 +5,7 @@
 #include <winsock2.h>
 //#include <netinet/in.h>
 
-#define MY_PORT    6161
-const uint32_t MY_IP = 3232235797;
+
 
 
 /* definition of protocol message type */

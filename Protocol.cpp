@@ -7,12 +7,11 @@
 #include <windows.h>
 #include <inttypes.h>
 #include "GnutellaHeader.h"
+#include "Params.h"
 
 #pragma comment(lib, "ws2_32.lib") //Winsock Library
 
 static int activeNeighbours = 0;
-const int TOTAL_POSSIBLE_NEIGHBOURS = 30;
-const int PONGB_MAX_ENTRY = 5;
 
 SOCKET master, new_socket, client_socket[TOTAL_POSSIBLE_NEIGHBOURS], s;
 
@@ -20,12 +19,6 @@ Neighbour *neighbourArray = new Neighbour[TOTAL_POSSIBLE_NEIGHBOURS];
 
 RecentQuery *queries = new RecentQuery[TOTAL_POSSIBLE_NEIGHBOURS];
 int recentQueryNo = 0;
-//TODO change to true if you wan query to work ==> pong will not work
-bool shouldSendQuery = false;
-const int OUR_SEARCH_CRITERIA_LENGTH = 11;
-const int MAX_HIT_ENTRY = 5;
-char query_key[11] = "rm1testkey";
-
 
 uint32_t msg_id;
 
@@ -253,7 +246,6 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 		printf("Received PONG TYPE A from %d with msg_id = %u.\n", socketNo, ntohl(header.msg_id));
 	}
 	else {
-		printf(" Length:  %d", htons(header.length));
 		printf("\nReceived PONG TYPE B from %d.\n", socketNo);
 		P2P_pong_front pong_front;
 		memcpy(&pong_front, recvbuf + HLEN, 4);
@@ -283,6 +275,9 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 			sprintf_s(port, "%u", (unsigned int)ntohs(pong_entry.port));
 
 			bool exists = false;
+			struct in_addr ip_addrr;
+			ip_addrr.s_addr = MY_IP;
+
 
 			for (int j = 0; j < activeNeighbours; j++) {
 				printf("%s vs %s\n", neighbourArray[j].rec_ip, ip);
@@ -290,7 +285,7 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 					exists = true;
 				}
 			}
-			if (!exists && strstr(ip, "130.233") > 0) {
+			if (!exists /*&& strstr(ip, "130.233") > 0 /*&& strcmp(inet_ntoa(ip_addrr), ip) != 0*/) {
 				extend_network(ip, port, activeNeighbours);
 			}
 		}
@@ -313,11 +308,14 @@ void send_PongBMessage(P2P_h header, int socketNo) {
 		struct in_addr paddr;
 		paddr.S_un.S_addr = ip;
 		pongEntry.ip = paddr;
-		uint16_t port;
-		sscanf(neighbourArray[i].rec_port, "%d", &port);
-		pongEntry.port = htons(port);
-		pongEntry.sbz = htons(0);
-		memcpy(combined + HLEN + sizeof(P2P_pong_front) + i * sizeof(P2P_pong_entry), &pongEntry, sizeof(P2P_pong_entry));
+
+		if (ip != header.org_ip) {
+			uint16_t port;
+			sscanf(neighbourArray[i].rec_port, "%d", &port);
+			pongEntry.port = htons(port);
+			pongEntry.sbz = htons(0);
+			memcpy(combined + HLEN + sizeof(P2P_pong_front) + i * sizeof(P2P_pong_entry), &pongEntry, sizeof(P2P_pong_entry));
+		}
 	}
 	int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
 	if (iResult == SOCKET_ERROR) {
@@ -327,7 +325,7 @@ void send_PongBMessage(P2P_h header, int socketNo) {
 		return;
 	}
 	else {
-		printf("Bytes sent from pong B: %d\n\n", iResult);
+		printf("SENT PONG B to: %d. No of bytes sent: %d\n\n", socketNo ,iResult);
 	}
 
 }
@@ -344,7 +342,7 @@ void forwardQuery(P2P_h header, char * recvbuf) {
 
 	header.ttl--;
 	header.org_ip = htonl(MY_IP);
-	header.org_port = htonl(MY_PORT);
+	header.org_port = htons(MY_PORT);
 	char combined[HLEN + OUR_SEARCH_CRITERIA_LENGTH];
 	memcpy(combined, &header, HLEN);
 	const int x = ntohs(header.length);
@@ -416,6 +414,9 @@ void checkQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
 		else {
 			printf("Bytes sent from query: %d\n\n", iResult);
 		}
+	}
+	else {
+		printf("No HIT here, forwarding....\n");
 	}
 }
 void sendJoinResponse(uint32_t msg_id, int socketNo) {
@@ -524,6 +525,7 @@ void process_receive(char* recvbuf, int socketNo) {
 			for (int j = 0; j < activeNeighbours; j++) {
 				printf("%s -- %s\n", neighbourArray[j].rec_ip, neighbourArray[j].rec_port);
 			}
+			sendTypeBPingMessage();
 			break;
 
 		case MSG_QHIT:
@@ -596,7 +598,7 @@ int main(int argc, char *argv[])
 	char *buffer;
 	buffer = (char*)malloc((MAXRECV + 1) * sizeof(char));
 
-	for (i = 0; i < 30; i++)
+	for (i = 0; i < TOTAL_POSSIBLE_NEIGHBOURS; i++)
 	{
 		client_socket[i] = 0;
 	}
@@ -643,8 +645,7 @@ int main(int argc, char *argv[])
 	addrlen = sizeof(struct sockaddr_in);
 
 
-	char *bootstrap_ip = "130.233.195.30";
-	char *port = "6346";
+	
 	extend_network(bootstrap_ip, port, activeNeighbours);
 	myTimer(hTimerQueue);
 
