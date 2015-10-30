@@ -110,4 +110,9 @@ struct Neighbour {
 	char    rec_port[15];
 };
 
+struct RecentQuery {
+	uint32_t    msg_id;
+	int socketNo;
+};
+
 #endif

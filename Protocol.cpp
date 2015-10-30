@@ -18,9 +18,12 @@ SOCKET master, new_socket, client_socket[TOTAL_POSSIBLE_NEIGHBOURS], s;
 
 Neighbour *neighbourArray = new Neighbour[TOTAL_POSSIBLE_NEIGHBOURS];
 
+RecentQuery *queries = new RecentQuery[TOTAL_POSSIBLE_NEIGHBOURS];
+int recentQueryNo = 0;
 //TODO change to true if you wan query to work ==> pong will not work
 bool shouldSendQuery = false;
 const int OUR_SEARCH_CRITERIA_LENGTH = 11;
+const int MAX_HIT_ENTRY = 5;
 char query_key[11] = "rm1testkey";
 
 
@@ -438,8 +441,48 @@ void sendJoinResponse(uint32_t msg_id, int socketNo) {
 		printf("A have accepted a new peer!: %d\n\n", iResult2);
 	}
 
+}
+void forwardQueryHit(char * recvbuf, P2P_h header) {
+	//Create buffer that can hold all.
+	bool found = false;
+	int socketNo;
+	for (int i = 0; i < recentQueryNo; i++) {
+		if (header.msg_id == queries[i].msg_id) {
+			found = true;
+			socketNo = queries[i].socketNo;
+		}
+	}
+	if (found) {
+		P2P_h hitHeader = getQueryHitMessageHeader(header.msg_id);
+		P2P_hit_front hit_front;
+		memcpy(&hit_front, recvbuf + HLEN, sizeof(P2P_hit_front));
 
+		// Create buffer that can hold all.
+		char combined[HLEN + sizeof(P2P_hit_front) + MAX_HIT_ENTRY * sizeof(P2P_hit_entry)];
+		memcpy(combined, &hitHeader, HLEN);
+		memcpy(combined + HLEN, &hit_front, sizeof(P2P_hit_front));
 
+		for (int i = 0; i < ntohs(hit_front.entry_size);i++) {
+			P2P_hit_entry hit_entry;
+			memcpy(&hit_entry, recvbuf + HLEN + sizeof(P2P_hit_front), sizeof(P2P_hit_entry));
+
+			printf("Forwarded Resource Value: 0x%x \n\n", ntohl(hit_entry.resourceValue));
+			
+			//add hit entry to buffer
+			memcpy(combined + HLEN + sizeof(P2P_hit_front)+ i * sizeof(P2P_hit_entry), &hit_entry, sizeof(P2P_hit_entry));
+		}
+
+		int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
+		if (iResult == SOCKET_ERROR) {
+			printf("send failed with error: %d\n", WSAGetLastError());
+			closesocket(client_socket[socketNo]);
+			WSACleanup();
+			return;
+		}
+		else {
+			printf("Bytes sent from query: %d\n\n", iResult);
+		}
+	}
 }
 void process_receive(char* recvbuf, int socketNo) {
 
@@ -489,7 +532,9 @@ void process_receive(char* recvbuf, int socketNo) {
 				printQueryResult(socketNo, recvbuf);
 			}
 			else {
+				
 				printf("Received query hit after having forwarded\n");
+				forwardQueryHit(recvbuf, received_header);
 			}
 			break;
 
@@ -498,6 +543,9 @@ void process_receive(char* recvbuf, int socketNo) {
 			checkQueryHit(recvbuf, received_header, socketNo);
 			if (received_header.ttl > 1) {
 				forwardQuery(received_header, recvbuf);
+				queries[recentQueryNo].msg_id = received_header.msg_id;
+				queries[recentQueryNo].socketNo = socketNo;
+				recentQueryNo++;
 			}
 			break;
 
