@@ -111,3 +111,16 @@ P2P_h getJoinResponseHeader(uint32_t msg_id) {
 	p2pHeader.length = htons(JOINLEN);
 	return p2pHeader;
 }
+P2P_h getPongBHeader(uint32_t msg_id) {
+	P2P_h p2pHeader;
+	p2pHeader.version = 1;
+	p2pHeader.ttl = 1;
+	p2pHeader.reserved = 0;
+	p2pHeader.org_port = htons(MY_PORT);
+	p2pHeader.org_ip = htonl(3232235797);
+	p2pHeader.msg_type = MSG_PONG;
+	p2pHeader.msg_id = msg_id;
+	p2pHeader.length = htons(1);
+	return p2pHeader;
+
+}

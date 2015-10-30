@@ -12,13 +12,15 @@
 
 static int activeNeighbours = 0;
 const int TOTAL_POSSIBLE_NEIGHBOURS = 30;
+const int PONGB_MAX_ENTRY = 5;
+
 SOCKET master, new_socket, client_socket[TOTAL_POSSIBLE_NEIGHBOURS], s;
 
 Neighbour *neighbourArray = new Neighbour[TOTAL_POSSIBLE_NEIGHBOURS];
 
 //TODO change to true if you wan query to work ==> pong will not work
 bool shouldSendQuery = false;
-
+const int OUR_SEARCH_CRITERIA_LENGTH = 11;
 uint32_t msg_id;
 
 HANDLE gDoneEvent;
@@ -176,7 +178,7 @@ void sendQuery(int socketNo, char query_key[]) {
 	msg_id = p2pHeaderQuery.msg_id;
 
 	//Create buffer that can hold both.
-	char combined[HLEN + 11];
+	char combined[HLEN + OUR_SEARCH_CRITERIA_LENGTH];
 
 	//Copy arrays in individually.
 	memcpy(combined, &p2pHeaderQuery, HLEN);
@@ -245,6 +247,7 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 		printf("Received PONG TYPE A from %d with msg_id = %u.\n", socketNo, ntohl(header.msg_id));
 	}
 	else {
+		printf(" Length:  %d", htons(header.length));
 		printf("\nReceived PONG TYPE B from %d.\n", socketNo);
 		P2P_pong_front pong_front;
 		memcpy(&pong_front, recvbuf + HLEN, 4);
@@ -287,6 +290,44 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 		}
 	}
 }
+
+void send_PongBMessage(P2P_h header, int socketNo) {
+	P2P_h pongHeader = getPongBHeader(header.msg_id);
+	P2P_pong_front pongFront;
+	uint16_t size = activeNeighbours > PONGB_MAX_ENTRY ? PONGB_MAX_ENTRY : activeNeighbours;
+	pongFront.entry_size = htons(size);
+	pongFront.sbz = htons(0);
+	//Create buffer that can hold all.
+	char combined[HLEN + sizeof(P2P_pong_front) + PONGB_MAX_ENTRY *sizeof(P2P_hit_entry)];
+	memcpy(combined, &pongHeader, HLEN);
+	memcpy(combined+ HLEN,&pongFront, sizeof(pongFront));
+	for (int i = 0; i < size; i++) {
+		P2P_pong_entry pongEntry;
+		DWORD ip = inet_addr(neighbourArray[i].rec_ip); 
+		struct in_addr paddr;
+		paddr.S_un.S_addr = ip;
+		pongEntry.ip = paddr;
+		uint16_t port;
+		sscanf(neighbourArray[i].rec_port, "%d", &port);
+		pongEntry.port = htons(port);
+		pongEntry.sbz = htons(0);
+		memcpy(combined + HLEN + sizeof(P2P_pong_front) + i * sizeof( P2P_pong_entry), &pongEntry, sizeof(P2P_pong_entry));
+	}
+	int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
+	if (iResult == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(client_socket[socketNo]);
+		WSACleanup();
+		return;
+	}
+	else {
+		printf("Bytes sent from pong B: %d\n\n", iResult);
+	}
+
+}
+
+
+
 
 void sendQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
 
@@ -382,7 +423,7 @@ void process_receive(char* recvbuf, int socketNo) {
 				printf("A join response was received from %s on port = %s.\n", inet_ntoa(ip_addr), port);
 				if (processJoinResponseBody(recvbuf)) {
 					if (shouldSendQuery) {
-						char query_key[11] = "vm1testkey";
+						char query_key[11] = "rm1testkey";
 						query_key[sizeof(query_key) - 1] = '\0';
 						sendQuery(socketNo, query_key);
 						shouldSendQuery = false;
@@ -424,6 +465,7 @@ void process_receive(char* recvbuf, int socketNo) {
 			}
 			if (received_header.ttl > 1) {
 				printf("PING TYPE B received from %s on port = %s\n", inet_ntoa(ip_addr), port);
+				send_PongBMessage(received_header,socketNo);
 			}
 			break;
 
