@@ -21,6 +21,9 @@ Neighbour *neighbourArray = new Neighbour[TOTAL_POSSIBLE_NEIGHBOURS];
 //TODO change to true if you wan query to work ==> pong will not work
 bool shouldSendQuery = false;
 const int OUR_SEARCH_CRITERIA_LENGTH = 11;
+char query_key[11] = "rm1testkey";
+
+
 uint32_t msg_id;
 
 HANDLE gDoneEvent;
@@ -300,10 +303,10 @@ void send_PongBMessage(P2P_h header, int socketNo) {
 	//Create buffer that can hold all.
 	char combined[HLEN + sizeof(P2P_pong_front) + PONGB_MAX_ENTRY *sizeof(P2P_hit_entry)];
 	memcpy(combined, &pongHeader, HLEN);
-	memcpy(combined+ HLEN,&pongFront, sizeof(pongFront));
+	memcpy(combined + HLEN, &pongFront, sizeof(pongFront));
 	for (int i = 0; i < size; i++) {
 		P2P_pong_entry pongEntry;
-		DWORD ip = inet_addr(neighbourArray[i].rec_ip); 
+		DWORD ip = inet_addr(neighbourArray[i].rec_ip);
 		struct in_addr paddr;
 		paddr.S_un.S_addr = ip;
 		pongEntry.ip = paddr;
@@ -311,7 +314,7 @@ void send_PongBMessage(P2P_h header, int socketNo) {
 		sscanf(neighbourArray[i].rec_port, "%d", &port);
 		pongEntry.port = htons(port);
 		pongEntry.sbz = htons(0);
-		memcpy(combined + HLEN + sizeof(P2P_pong_front) + i * sizeof( P2P_pong_entry), &pongEntry, sizeof(P2P_pong_entry));
+		memcpy(combined + HLEN + sizeof(P2P_pong_front) + i * sizeof(P2P_pong_entry), &pongEntry, sizeof(P2P_pong_entry));
 	}
 	int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
 	if (iResult == SOCKET_ERROR) {
@@ -327,9 +330,47 @@ void send_PongBMessage(P2P_h header, int socketNo) {
 }
 
 
+void forwardQuery(P2P_h header, char * recvbuf) {
 
+	uint32_t ip = header.org_ip;
+	struct in_addr ip_addr;
+	ip_addr.s_addr = ip;
 
-void sendQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
+	char port[15];
+	sprintf_s(port, "%u", ntohs(header.org_port));
+
+	header.ttl--;
+	header.org_ip = htonl(MY_IP);
+	header.org_port = htonl(MY_PORT);
+	char combined[HLEN + OUR_SEARCH_CRITERIA_LENGTH];
+	memcpy(combined, &header, HLEN);
+	const int x = ntohs(header.length);
+	char query_key2[OUR_SEARCH_CRITERIA_LENGTH];
+	memcpy(query_key2, recvbuf + HLEN, OUR_SEARCH_CRITERIA_LENGTH);
+	query_key2[sizeof(query_key2) - 1] = '\0';
+	memcpy(combined + HLEN, query_key2, OUR_SEARCH_CRITERIA_LENGTH);
+	printf("Looking for %s\n", query_key2);
+
+	for (int i = 0; i < activeNeighbours; i++) {
+		//TODO eventually check if same ip and diffferent port?
+		if (strcmp(neighbourArray[i].rec_ip, inet_ntoa(ip_addr)) != 0) {
+			printf("Forwarding query to: %s \n", neighbourArray[i].rec_ip);
+			int iResult = send(client_socket[i], combined, sizeof(combined), 0);
+			if (iResult == SOCKET_ERROR) {
+				printf("send failed with error: %d\n", WSAGetLastError());
+				closesocket(client_socket[i]);
+				WSACleanup();
+				return;
+			}
+			else {
+				printf("Bytes sent from query: %d\n\n", iResult);
+			}
+		}
+	}
+
+}
+
+void checkQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
 
 	int length = ntohs(received_header.length);
 	P2P_query query;
@@ -397,7 +438,7 @@ void sendJoinResponse(uint32_t msg_id, int socketNo) {
 		printf("A have accepted a new peer!: %d\n\n", iResult2);
 	}
 
-	
+
 
 }
 void process_receive(char* recvbuf, int socketNo) {
@@ -423,7 +464,7 @@ void process_receive(char* recvbuf, int socketNo) {
 				printf("A join response was received from %s on port = %s.\n", inet_ntoa(ip_addr), port);
 				if (processJoinResponseBody(recvbuf)) {
 					if (shouldSendQuery) {
-						char query_key[11] = "rm1testkey";
+
 						query_key[sizeof(query_key) - 1] = '\0';
 						sendQuery(socketNo, query_key);
 						shouldSendQuery = false;
@@ -443,18 +484,21 @@ void process_receive(char* recvbuf, int socketNo) {
 			break;
 
 		case MSG_QHIT:
+			
 			if (ntohl(received_header.msg_id == msg_id)) {
 				printQueryResult(socketNo, recvbuf);
+			}
+			else {
+				printf("Received query hit after having forwarded\n");
 			}
 			break;
 
 		case MSG_QUERY:
 			printf("%s on port = %s asked for some data.\n", inet_ntoa(ip_addr), port);
+			checkQueryHit(recvbuf, received_header, socketNo);
 			if (received_header.ttl > 1) {
-				//TODO forward query
+				forwardQuery(received_header, recvbuf);
 			}
-			
-			sendQueryHit(recvbuf, received_header, socketNo);
 			break;
 
 		case MSG_PING:
@@ -465,7 +509,7 @@ void process_receive(char* recvbuf, int socketNo) {
 			}
 			if (received_header.ttl > 1) {
 				printf("PING TYPE B received from %s on port = %s\n", inet_ntoa(ip_addr), port);
-				send_PongBMessage(received_header,socketNo);
+				send_PongBMessage(received_header, socketNo);
 			}
 			break;
 
@@ -551,7 +595,7 @@ int main(int argc, char *argv[])
 	addrlen = sizeof(struct sockaddr_in);
 
 
-	char *bootstrap_ip = "130.233.195.32";
+	char *bootstrap_ip = "130.233.195.30";
 	char *port = "6346";
 	extend_network(bootstrap_ip, port, activeNeighbours);
 	myTimer(hTimerQueue);
