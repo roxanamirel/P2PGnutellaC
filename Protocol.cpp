@@ -169,7 +169,8 @@ void send_PongAMessage(P2P_h pongA, int socketNo) {
 
 void sendQuery(int socketNo, char query_key[]) {
 
-	printf("\n\n[Query] Looking for the key %s from socket %d\n", query_key, socketNo);
+	printf("\n\n[Query] Looking for the key from socket %d\n", socketNo);
+	printf("[Query] Search after key: %s\n\n", query_key);
 
 	P2P_h p2pHeaderQuery = getQueryMessageHeader(strlen(query_key));
 	msg_id = p2pHeaderQuery.msg_id;
@@ -181,9 +182,17 @@ void sendQuery(int socketNo, char query_key[]) {
 	memcpy(combined, &p2pHeaderQuery, HLEN);
 	memcpy(combined + HLEN, query_key, strlen(query_key));
 
-	send(client_socket[socketNo], combined, sizeof(combined), 0);
+	int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
+	if (iResult == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(client_socket[socketNo]);
+		WSACleanup();
+		return;
+	}
+	else {
+		printf("Bytes sent from query: %d\n\n", iResult);
+	}
 }
-
 void printQueryResult(int socketNo, char *recvbuf) {
 
 	printf("HIT for a query request from %d \n", socketNo);
@@ -279,6 +288,77 @@ void handlePongResponse(int socketNo, P2P_h header, char *recvbuf) {
 	}
 }
 
+void sendQueryHit(char *recvbuf, P2P_h received_header, int socketNo) {
+
+	int length = ntohs(received_header.length);
+	P2P_query query;
+
+	memcpy(&query, recvbuf + HLEN, length);
+	char my_key[11] = "rm1testkey";
+
+	char subbuff[11];
+	memcpy(subbuff, &query.search_criteria, 10);
+	subbuff[10] = '\0';
+
+	if (strcmp(subbuff, my_key) == 0) {
+		printf("indeed for this key he asked\n");
+		P2P_h queryHit = getQueryHitMessageHeader(received_header.msg_id);
+
+		P2P_hit_front hit_front;
+		hit_front.entry_size = htons((uint16_t)1);
+		hit_front.sbz = htons((uint16_t)0);
+
+		P2P_hit_entry hit_entry;
+		uint16_t resourceId;
+		memcpy(&resourceId, subbuff, sizeof(uint16_t));
+		hit_entry.resourceId = htons(resourceId);
+		hit_entry.resourceValue = htonl(MYVALUE);
+		hit_entry.sbz = 0;
+
+		//Create buffer that can hold all.
+		char combined[HLEN + sizeof(P2P_hit_front) + sizeof(P2P_hit_entry)];
+		//Copy arrays in individually.
+		memcpy(combined, &queryHit, HLEN);
+		memcpy(combined + HLEN, &hit_front, sizeof(P2P_hit_front));
+		memcpy(combined + HLEN + sizeof(P2P_hit_front), &hit_entry, sizeof(P2P_hit_entry));
+		int iResult = send(client_socket[socketNo], combined, sizeof(combined), 0);
+		if (iResult == SOCKET_ERROR) {
+			printf("send failed with error: %d\n", WSAGetLastError());
+			closesocket(client_socket[socketNo]);
+			WSACleanup();
+			return;
+		}
+		else {
+			printf("Bytes sent from query: %d\n\n", iResult);
+		}
+	}
+}
+void sendJoinResponse(uint32_t msg_id, int socketNo) {
+	P2P_h joinResponse = getJoinResponseHeader(msg_id);
+	P2P_join join_responseBody;
+	join_responseBody.status = htons(JOIN_ACC);
+
+	//Create buffer that can hold both.
+	char combined[HLEN + JOINLEN];
+
+	//Copy arrays in individually.
+	memcpy(combined, &joinResponse, HLEN);
+	memcpy(combined + HLEN, &join_responseBody, JOINLEN);
+
+	int iResult2 = send(client_socket[socketNo], combined, sizeof(combined), 0);
+	if (iResult2 == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(client_socket[socketNo]);
+		WSACleanup();
+		return;
+	}
+	else {
+		printf("A have accepted a new peer!: %d\n\n", iResult2);
+	}
+
+	
+
+}
 void process_receive(char* recvbuf, int socketNo) {
 
 	P2P_h received_header;
@@ -301,13 +381,6 @@ void process_receive(char* recvbuf, int socketNo) {
 			if (htons(received_header.length) == JOINLEN) {
 				printf("A join response was received from %s on port = %s.\n", inet_ntoa(ip_addr), port);
 				if (processJoinResponseBody(recvbuf)) {
-					strcpy(neighbourArray[activeNeighbours].rec_ip, inet_ntoa(ip_addr));
-					strcpy(neighbourArray[activeNeighbours].rec_port, port);
-					printf("[MSG_JOIN] Neighbour with ip = %s and port = %s was added to list.\n",
-						neighbourArray[activeNeighbours].rec_ip,
-						neighbourArray[activeNeighbours].rec_port);
-					activeNeighbours = activeNeighbours + 1;
-
 					if (shouldSendQuery) {
 						char query_key[11] = "vm1testkey";
 						query_key[sizeof(query_key) - 1] = '\0';
@@ -317,10 +390,15 @@ void process_receive(char* recvbuf, int socketNo) {
 				}
 			}
 			else {
-				printf("JOIN REQUEST\n");
-				//sendJoinResponse(received_header, socketNo);
+				printf("A join request was received from %s on port = %s.\n", inet_ntoa(ip_addr), port);
+				sendJoinResponse(ntohl(received_header.msg_id), socketNo);
 			}
-
+			strcpy(neighbourArray[activeNeighbours].rec_ip, inet_ntoa(ip_addr));
+			strcpy(neighbourArray[activeNeighbours].rec_port, port);
+			activeNeighbours = activeNeighbours + 1;
+			for (int j = 0; j < activeNeighbours; j++) {
+				printf("%s -- %s\n", neighbourArray[j].rec_ip, neighbourArray[j].rec_port);
+			}
 			break;
 
 		case MSG_QHIT:
@@ -330,12 +408,12 @@ void process_receive(char* recvbuf, int socketNo) {
 			break;
 
 		case MSG_QUERY:
-			printf("%s on port = %s asked for our data.\n", inet_ntoa(ip_addr), port);
+			printf("%s on port = %s asked for some data.\n", inet_ntoa(ip_addr), port);
 			if (received_header.ttl > 1) {
 				//TODO forward query
 			}
-			//TODOOOOOOOOOOOOOOOOOOoo
-			//sendQueryHit(recvbuf, received_header, socketNo);
+			
+			sendQueryHit(recvbuf, received_header, socketNo);
 			break;
 
 		case MSG_PING:
@@ -431,7 +509,7 @@ int main(int argc, char *argv[])
 	addrlen = sizeof(struct sockaddr_in);
 
 
-	char *bootstrap_ip = "130.233.195.30";
+	char *bootstrap_ip = "130.233.195.32";
 	char *port = "6346";
 	extend_network(bootstrap_ip, port, activeNeighbours);
 	myTimer(hTimerQueue);

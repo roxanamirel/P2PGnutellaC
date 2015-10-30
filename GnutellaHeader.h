@@ -64,7 +64,7 @@ P2P_h getQueryHitMessageHeader(uint32_t msg_id) {
 	p2pHeaderQuery.org_port = htons(MY_PORT);
 	p2pHeaderQuery.org_ip = htonl(MY_IP);
 	p2pHeaderQuery.msg_type = MSG_QHIT;
-	p2pHeaderQuery.msg_id = htonl(msg_id);
+	p2pHeaderQuery.msg_id = msg_id;
 	p2pHeaderQuery.length = 0;
 	return p2pHeaderQuery;
 }
@@ -97,4 +97,17 @@ P2P_h getPingTypeAMessage() {
 	p2pHeader.length = htons(0);
 	return p2pHeader;
 
+}
+
+P2P_h getJoinResponseHeader(uint32_t msg_id) {
+	P2P_h p2pHeader;
+	p2pHeader.version = 1;
+	p2pHeader.ttl = 1;
+	p2pHeader.reserved = 0;
+	p2pHeader.org_port = htons(MY_PORT);
+	p2pHeader.org_ip = htonl(3232235797);
+	p2pHeader.msg_type = MSG_JOIN;
+	p2pHeader.msg_id = htonl(msg_id);
+	p2pHeader.length = htons(JOINLEN);
+	return p2pHeader;
 }

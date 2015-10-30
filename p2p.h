@@ -5,12 +5,8 @@
 #include <winsock2.h>
 //#include <netinet/in.h>
 
-
-/* Default listening port */
-#define PORT_DEFAULT    6346
-
-#define MY_PORT    6159
-const uint32_t MY_IP = 3232235798;
+#define MY_PORT    6161
+const uint32_t MY_IP = 3232235797;
 
 
 /* definition of protocol message type */
