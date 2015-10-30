@@ -10,7 +10,7 @@
 #define PORT_DEFAULT    6346
 
 #define MY_PORT    6159
-const uint32_t MY_IP = 3232235797;
+const uint32_t MY_IP = 3232235798;
 
 
 /* definition of protocol message type */
@@ -110,8 +110,8 @@ struct P2P_query {
 };
 
 struct Neighbour {
-	char*    ip;
-	char*    port;
+	char    rec_ip[15];
+	char    rec_port[15];
 };
 
 #endif

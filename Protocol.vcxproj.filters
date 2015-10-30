@@ -27,6 +27,9 @@
     <ClInclude Include="p2p.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="GnutellaHeader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
