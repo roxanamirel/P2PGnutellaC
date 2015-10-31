@@ -445,7 +445,6 @@ void sendJoinResponse(uint32_t msg_id, int socketNo) {
 
 }
 void forwardQueryHit(char * recvbuf, P2P_h header) {
-	//Create buffer that can hold all.
 	bool found = false;
 	int socketNo;
 	for (int i = 0; i < recentQueryNo; i++) {
@@ -639,14 +638,11 @@ int main(int argc, char *argv[])
 	//Listen to incoming connections
 	listen(master, 3);
 
-
 	//Accept and incoming connection
 	puts("Waiting for incoming connections...\n\n");
 
 	addrlen = sizeof(struct sockaddr_in);
 
-
-	
 	extend_network(bootstrap_ip, port, activeNeighbours);
 	myTimer(hTimerQueue);
 
