@@ -70,7 +70,7 @@ int myTimer(HANDLE hTimerQueue) {
 	// Set a timer to call the timer routine in 10 seconds.
 	int arg = 123;
 	if (!CreateTimerQueueTimer(&hTimer, hTimerQueue,
-		(WAITORTIMERCALLBACK)TimerRoutine, &arg, 10000, 5000, 0))
+		(WAITORTIMERCALLBACK)TimerRoutine, &arg, 10000, 10000, 0))
 	{
 		printf("CreateTimerQueueTimer failed (%d)\n", GetLastError());
 		return 3;
@@ -440,7 +440,7 @@ void sendJoinResponse(uint32_t msg_id, int socketNo) {
 		return;
 	}
 	else {
-		printf("A have accepted a new peer!: %d\n\n", iResult2);
+		printf("I have accepted a new peer on socket: %d\n\n", socketNo);
 	}
 
 }
@@ -467,7 +467,7 @@ void forwardQueryHit(char * recvbuf, P2P_h header) {
 			P2P_hit_entry hit_entry;
 			memcpy(&hit_entry, recvbuf + HLEN + sizeof(P2P_hit_front), sizeof(P2P_hit_entry));
 
-			printf("Forwarded Resource Value: 0x%x \n\n", ntohl(hit_entry.resourceValue));
+			printf("Forwarded Resource Value: 0x%x to socket:  %d \n\n", ntohl(hit_entry.resourceValue), socketNo);
 			
 			//add hit entry to buffer
 			memcpy(combined + HLEN + sizeof(P2P_hit_front)+ i * sizeof(P2P_hit_entry), &hit_entry, sizeof(P2P_hit_entry));
@@ -525,7 +525,7 @@ void process_receive(char* recvbuf, int socketNo) {
 			for (int j = 0; j < activeNeighbours; j++) {
 				printf("%s -- %s\n", neighbourArray[j].rec_ip, neighbourArray[j].rec_port);
 			}
-			sendTypeBPingMessage();
+			//sendTypeBPingMessage();
 			break;
 
 		case MSG_QHIT:
@@ -566,7 +566,6 @@ void process_receive(char* recvbuf, int socketNo) {
 		case MSG_PONG:
 			handlePongResponse(socketNo, received_header, recvbuf);
 			break;
-
 		default:
 			printf("OTHER TYPE OF MESG:  \n");
 			printf("Length: %u", received_header.length);
@@ -584,6 +583,20 @@ void process_receive(char* recvbuf, int socketNo) {
 	}
 }
 
+void removeFromNeighboursList(int i, char * address) {
+	if ((strcmp(neighbourArray[i].rec_ip, address) == 0)) {
+		int k = i;
+		for (int j = i + 1; j < activeNeighbours; j++) {
+			neighbourArray[k] = neighbourArray[j];
+			k++;
+		}
+	}
+	activeNeighbours--;
+	printf("The host with ip %s was REMOVED from my neighbours list \n",address);
+	for (int j = 0; j < activeNeighbours; j++) {
+		printf("%s -- %s\n", neighbourArray[j].rec_ip, neighbourArray[j].rec_port);
+	}
+}
 int main(int argc, char *argv[])
 {
 	WSADATA wsa;
@@ -718,7 +731,7 @@ int main(int argc, char *argv[])
 					{
 						//Somebody disconnected , get his details and print
 						printf("Host disconnected unexpectedly , ip %s , port %d \n", inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-
+						//removeFromNeighboursList(i, inet_ntoa(address.sin_addr));		
 						//Close the socket and mark as 0 in list for reuse
 						closesocket(s);
 						client_socket[i] = 0;
@@ -732,7 +745,7 @@ int main(int argc, char *argv[])
 				{
 					//Somebody disconnected , get his details and print
 					printf("Host disconnected , ip %s , port %d \n", inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-
+					//removeFromNeighboursList(i, inet_ntoa(address.sin_addr));
 					//Close the socket and mark as 0 in list for reuse
 					closesocket(s);
 					client_socket[i] = 0;
